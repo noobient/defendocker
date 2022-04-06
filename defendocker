@@ -45,20 +45,35 @@ function defend_docker
 
 function check_path
 {
-    real_path=$(realpath "${1}")
-    $debug && echo -e "Checking:\t\e[36m${real_path}\e[0m" || true
-
     allowed=0
-    local i
-    for (( i=0; i<${#allowed_paths[@]} ; i++ ))
-    do
-        $debug && echo -e "Matching:\t\e[35m${allowed_paths[i]}\e[0m" || true
-        if [[ "${real_path}" =~ ^${allowed_paths[i]}.* ]]
-        then
-            allowed=1
-            break
-        fi
-    done
+
+    $debug && echo -e "Checking:\t\e[36m${1}\e[0m" || true
+
+    # if path isn't absolute, it'll be treated as a volume
+    # if it doesn't exist, docker creates it automatically
+    if [ "${1:0:1}" == '/' ]
+    then
+        # filesystem path, match against allowlist
+        $debug && echo -e "Type:\t\t\e[36mpath\e[0m" || true
+
+        real_path=$(realpath "${1}")
+        $debug && echo -e "Real path:\t\e[36m${real_path}\e[0m" || true
+
+        local i
+        for (( i=0; i<${#allowed_paths[@]} ; i++ ))
+        do
+            $debug && echo -e "Matching:\t\e[35m${allowed_paths[i]}\e[0m" || true
+            if [[ "${real_path}" =~ ^${allowed_paths[i]}.* ]]
+            then
+                allowed=1
+                break
+            fi
+        done
+    else
+        # volume
+        allowed=1
+        $debug && echo -e "Type:\t\t\e[36mvolume\e[0m" || true
+    fi
 
     if [ $allowed -eq 0 ]
     then
@@ -71,8 +86,10 @@ function check_path
     fi
 }
 
-# example: --mount type=volume,target=/icanwrite
-# reference: https://docs.docker.com/engine/reference/commandline/service_create/#add-bind-mounts-volumes-or-memory-filesystems
+# example: --mount type=bind,source=/,target=/host-root
+# reference:
+# https://docs.docker.com/engine/reference/commandline/service_create/#add-bind-mounts-volumes-or-memory-filesystems
+# https://docs.docker.com/storage/volumes/
 function check_mount
 {
     IFS=', ' read -r -a mount_opts <<< "$1"
@@ -90,6 +107,16 @@ function check_mount
                 ;;
         esac
     done
+}
+
+# example: --volume=/:/host-root[:ro|rw]
+# reference:
+# https://docs.docker.com/engine/reference/run/#volume-shared-filesystems
+# https://docs.docker.com/engine/reference/commandline/run/#mount-volume--v---read-only
+function check_volume
+{
+    source=$(cut -d':' -f1 <<< "${1}")
+    check_path "${source}"
 }
 
 # parse_config() uses debug, so check debug first
@@ -115,11 +142,19 @@ parse_config
 for (( i=0; i < ${#argv[@]}; i++ ))
 do
     case "${argv[i]}" in
+        # despite the docs claiming otherwise,
+        # both ' ' and '=' syntax are accepted by all commands
         --mount)
             check_mount "${argv[i+1]}"
             ;;
         --mount=*)
             check_mount $(cut -d'=' -f2- <<< "${argv[i]}")
+            ;;
+        -v|--volume)
+            check_volume "${argv[i+1]}"
+            ;;
+        -v=*|--volume=*)
+            check_volume $(cut -d'=' -f2- <<< "${argv[i]}")
             ;;
         *)
             ;;
