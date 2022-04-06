@@ -118,6 +118,9 @@ do
         --mount)
             check_mount "${argv[i+1]}"
             ;;
+        --mount=*)
+            check_mount $(cut -d'=' -f2- <<< "${argv[i]}")
+            ;;
         *)
             ;;
     esac
