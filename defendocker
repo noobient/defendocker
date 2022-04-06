@@ -1,0 +1,126 @@
+#!/bin/bash
+
+set -eu
+
+export dd_config='/etc/defendocker.conf'
+
+# use own array, easier to properly iterate
+argv=("${@}")
+# this is equivalent to $# but let's just check explicitly
+argc=${#argv[@]}
+
+function print_sep
+{
+    $debug && echo '----------------------------------------' || true
+}
+
+function parse_config
+{
+    $debug && echo -n 'Config file: ' || true
+    if [ -e "${dd_config}" ]
+    then
+        $debug && echo -e "\e[36m${dd_config}\e[0m" || true
+        readarray -t allowed_paths < "${dd_config}"
+    else
+        $debug && echo -e "\e[36mmissing, using defaults\e[0m" || true
+        allowed_paths=("/home/" "/proc/" "/tmp/.X11-unix" "/dev/shm" "/media/" "/mnt/")
+    fi
+
+    if [ $debug == true ]
+    then
+        echo 'Allowed paths: '
+        for (( i=0; i<${#allowed_paths[@]} ; i++ ))
+        do
+            echo -e "\e[36m${allowed_paths[i]}\e[0m"
+        done
+        print_sep
+    fi
+}
+
+function defend_docker
+{
+    echo -e "\e[31mError\e[0m: path \e[36m${1}\e[0m rejected by administrative policy."
+    exit 1
+}
+
+function check_path
+{
+    real_path=$(realpath "${1}")
+    $debug && echo -e "Checking:\t\e[36m${real_path}\e[0m" || true
+
+    allowed=0
+    local i
+    for (( i=0; i<${#allowed_paths[@]} ; i++ ))
+    do
+        $debug && echo -e "Matching:\t\e[35m${allowed_paths[i]}\e[0m" || true
+        if [[ "${real_path}" =~ ^${allowed_paths[i]}.* ]]
+        then
+            allowed=1
+            break
+        fi
+    done
+
+    if [ $allowed -eq 0 ]
+    then
+        $debug && echo -e "Result:\t\t\e[31mdeny\e[0m" || true
+        print_sep
+        defend_docker "${real_path}"
+    else
+        $debug && echo -e "Result:\t\t\e[32mallow\e[0m" || true
+        print_sep
+    fi
+}
+
+# example: --mount type=volume,target=/icanwrite
+# reference: https://docs.docker.com/engine/reference/commandline/service_create/#add-bind-mounts-volumes-or-memory-filesystems
+function check_mount
+{
+    IFS=', ' read -r -a mount_opts <<< "$1"
+
+    local i
+    for i in "${mount_opts[@]}"
+    do
+        key=$(cut -d'=' -f1 <<< "${i}")
+        value=$(cut -d'=' -f2 <<< "${i}")
+        case "${key}" in
+            source|src)
+                check_path "${value}"
+                ;;
+            *)
+                ;;
+        esac
+    done
+}
+
+# parse_config() uses debug, so check debug first
+export debug=false
+# we need to parse CLI arguments twice, because we support
+# debug, and it may or may not be the first param
+# although docker only supports it as the first param
+# but we can't rely on that being the case forever
+for (( i=0; i < ${#argv[@]}; i++ ))
+do
+    case "${argv[i]}" in
+        -D|--debug)
+            debug=true
+            ;;
+        *)
+            ;;
+    esac
+done
+
+parse_config
+
+# check CLI arguments before passing to docker
+for (( i=0; i < ${#argv[@]}; i++ ))
+do
+    case "${argv[i]}" in
+        --mount)
+            check_mount "${argv[i+1]}"
+            ;;
+        *)
+            ;;
+    esac
+done
+
+docker "$@"
