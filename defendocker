@@ -3,6 +3,7 @@
 set -eu
 
 export dd_config='/etc/defendocker.conf'
+export docker_path='/usr/bin/nodocker'
 
 # use own array, easier to properly iterate
 argv=("${@}")
@@ -161,4 +162,4 @@ do
     esac
 done
 
-docker "$@"
+"${docker_path}" "$@"
